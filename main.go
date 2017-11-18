@@ -32,7 +32,7 @@ func main() {
 			Name:  "atomic",
 			Usage: "Write atomicly. Only needed with --memory.",
 		},
-		cli.StringFlag{
+		cli.BoolFlag{
 			Name:  "skinny-fast",
 			Usage: "Move the backup instead of copying. Momentarily unsafe.",
 		},
@@ -72,6 +72,10 @@ func GetBackup(c *cli.Context) (Backup, error) {
 	if c.GlobalString("backup") == "" {
 		log.Print("Choosing no backup.")
 		return &NoBackup{}, nil
+	}
+	if c.GlobalBool("skinny-fast") {
+		log.Print("Choosing post-sponge backup.")
+		return NewSkinnyFastBackup(c.Args().First(), c.GlobalString("backup")), nil
 	}
 	log.Print("Choosing concurrent backup.")
 	return NewConcurrentBackup(c.Args().First(), c.GlobalString("backup")), nil
@@ -193,6 +197,32 @@ func (c *NoBackup) Abort() error {
 
 func (c *NoBackup) Complete() error {
 	return nil
+}
+
+
+type SkinnyFastBackup struct {
+	SourceFn string
+	BackupFn string
+}
+
+func NewSkinnyFastBackup(source, backup string) Backup {
+	return &SkinnyFastBackup{
+		SourceFn: source,
+		BackupFn: BackupFile(backup, source),
+	}
+}
+
+func (c *SkinnyFastBackup) Begin() error {
+	return nil
+}
+
+func (c *SkinnyFastBackup) Abort() error {
+	return nil
+}
+
+func (c *SkinnyFastBackup) Complete() error {
+	log.Printf("Renaming %s to %s", c.SourceFn, c.BackupFn)
+	return os.Rename(c.SourceFn, c.BackupFn)
 }
 
 
