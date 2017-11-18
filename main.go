@@ -8,6 +8,9 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"errors"
+	"path"
+	"strings"
 )
 
 var version string;
@@ -24,6 +27,10 @@ func main() {
 		cli.StringFlag{
 			Name:  "suffix, s",
 			Usage: "Preseve old file contents the following suffix.",
+		},
+		cli.BoolFlag{
+			Name:  "atomic",
+			Usage: "Write atomicly. Only needed with --memory.",
 		},
 		cli.StringFlag{
 			Name:  "skinny-fast",
@@ -66,6 +73,20 @@ func GetBackup(c *cli.Context) (Backup, error) {
 }
 
 func GetSpongeFile(c *cli.Context) (SpongeFile, error) {
+	if !c.GlobalBool("memory") {
+		return NewAtomicSponge(
+			c.Args().First(),
+			c.GlobalString("tmpdir"),
+			c.GlobalBool("leave-dirty")),
+			nil
+	}
+	if c.GlobalBool("atomic") {
+		return NewAtomicMemorySponge(
+			c.Args().First(),
+			c.GlobalString("tmpdir"),
+			c.GlobalBool("leave-dirty")),
+			nil
+	}
 	return NewMemorySponge(c.Args().First()), nil
 }
 
@@ -79,6 +100,9 @@ func OpenInput(c *cli.Context) (*os.File, error) {
 }
 
 func SpongeAction(c *cli.Context) error {
+	if c.GlobalBool("atomic") && !c.GlobalBool("memory") {
+		return errors.New("--atomic makes no sense wihout --memory")
+	}
 	log.Print("Get backup.")
 	bf, err := GetBackup(c)
 	if err != nil {
@@ -220,19 +244,45 @@ func (ms *MemorySponge) Cleanup() error {
 // Atomic Sponge
 type AtomicSponge struct {
 	SpongeFn   string
+	TempDir    string
 	TargetFn   string
-	ActiveFile *os.File
+	Sponge     *os.File
 	LeaveDirty bool
 }
 
 var DEFAULT_MODE os.FileMode = 0600
 
+func TempDir(tempDir, targetFn string) string {
+	if tempDir == "" {
+		return path.Dir(targetFn)
+	}
+	tempDir = strings.Replace(tempDir, "{dir}", path.Dir(targetFn), -1)
+	return strings.Replace(tempDir, "{base}", path.Base(targetFn), -1)
+}
+
+func BackupFileDir(backupFile, targetFn string) string {
+	backupFile = strings.Replace(backupFile, "{dir}", path.Dir(targetFn), -1)
+	backupFile = strings.Replace(backupFile, "{base}", path.Base(targetFn), -1)
+	return strings.Replace(backupFile, "{file}", targetFn, -1)
+}
+
+func NewAtomicSponge(targetFn, tempDir string, leaveDirty bool) SpongeFile {
+	return &AtomicSponge{
+		TargetFn: targetFn,
+		TempDir: TempDir(tempDir, targetFn),
+		LeaveDirty: leaveDirty,
+	}
+}
+
 func (ms *AtomicSponge) Begin() error {
-	f, err := os.OpenFile(ms.SpongeFn, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, DEFAULT_MODE)
+	sponge, err := ioutil.TempFile(ms.TempDir, ".sponge")
 	if err != nil {
+		log.Printf("Cannot create sponge file in %s", ms.TempDir)
 		return err
 	}
-	ms.ActiveFile = f
+	ms.Sponge = sponge
+	ms.SpongeFn = sponge.Name()
+	log.Printf("Create sponge file %s", sponge.Name())
 	return nil
 }
 
@@ -241,7 +291,8 @@ func (ms *AtomicSponge) Abort() error {
 }
 
 func (ms *AtomicSponge) Write(d []byte) error {
-	n, err := ms.ActiveFile.Write(d)
+	n, err := ms.Sponge.Write(d)
+	log.Printf("Wrote %d bytes to sponge file.", n)
 	if err != nil {
 		return err
 	}
@@ -252,8 +303,9 @@ func (ms *AtomicSponge) Write(d []byte) error {
 }
 
 func (ms *AtomicSponge) Complete() error {
-	err := ms.ActiveFile.Close()
-	ms.ActiveFile = nil
+	log.Print("Closing sponge.")
+	err := ms.Sponge.Close()
+	ms.Sponge = nil
 	if err != nil {
 		return err
 	}
@@ -262,8 +314,13 @@ func (ms *AtomicSponge) Complete() error {
 		return err
 	}
 	if err == nil {
-		os.Chmod(ms.TargetFn, fi.Mode())
+		log.Printf("Setting sponge permissions to match existing file: %o.", fi.Mode())
+		if err := os.Chmod(ms.SpongeFn, fi.Mode()); err != nil {
+			log.Printf("Cannot set %s to mode %o", ms.SpongeFn, fi.Mode())
+		}
+
 	}
+	log.Printf("Renaming sponge file %s to %s", ms.SpongeFn, ms.TargetFn)
 	if err := os.Rename(ms.SpongeFn, ms.TargetFn); err != nil {
 		return err
 	}
@@ -272,13 +329,58 @@ func (ms *AtomicSponge) Complete() error {
 
 func (ms *AtomicSponge) Cleanup() error {
 	if ms.LeaveDirty {
+		log.Print("Leaving dirty environment.")
 		return nil
 	}
 	if _, err := os.Stat(ms.SpongeFn); os.IsNotExist(err) {
+		log.Print("Nothing to clean.")
 		return nil
 	}
+	log.Printf("Removing stray sponge file %s.", ms.SpongeFn)
 	if err := os.Remove(ms.SpongeFn); err != nil {
 		return err
 	}
 	return nil
+}
+
+
+type AtomicMemorySponge struct {
+	Writer SpongeFile
+	Data []byte
+}
+
+func NewAtomicMemorySponge(targetFn, tmpDir string, leaveDirty bool) SpongeFile {
+	return &AtomicMemorySponge{
+		Writer: NewAtomicSponge(targetFn, tmpDir, leaveDirty),
+		Data: make([]byte, 0, READSIZE),
+	}
+}
+
+func (ams *AtomicMemorySponge) Begin() error {
+	return nil
+}
+
+func (ams *AtomicMemorySponge) Write(d []byte) error {
+	log.Printf("Appending %d bytes to %d bytes in memory", len(d), len(ams.Data))
+	ams.Data = append(ams.Data, d...)
+	log.Printf("Total data length %d bytes in memory", len(ams.Data))
+	return nil
+}
+
+func (ams *AtomicMemorySponge) Abort() error {
+	return ams.Writer.Abort()
+}
+
+func (ams *AtomicMemorySponge) Complete() error {
+	if err := ams.Writer.Begin(); err != nil {
+		return err
+	}
+	if err := ams.Writer.Write(ams.Data); err != nil {
+		return err
+	}
+	return ams.Writer.Complete()
+}
+
+func (ams *AtomicMemorySponge) Cleanup() error {
+	return ams.Writer.Cleanup()
 }
