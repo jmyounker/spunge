@@ -25,8 +25,8 @@ func main() {
 			Usage: "Read input from here.",
 		},
 		cli.StringFlag{
-			Name:  "suffix, s",
-			Usage: "Preseve old file contents the following suffix.",
+			Name:  "backup, b",
+			Usage: "Backs up to the specified file.",
 		},
 		cli.BoolFlag{
 			Name:  "atomic",
@@ -41,7 +41,7 @@ func main() {
 			Usage: "Accumuate data in memory.",
 		},
 		cli.StringFlag{
-			Name:  "tmp, t",
+			Name:  "tmpdir, t",
 			Usage: "Put the tempfile in this drectory.  Must be on the same filesystem.",
 		},
 	}
@@ -69,7 +69,12 @@ type SpongeFile interface {
 }
 
 func GetBackup(c *cli.Context) (Backup, error) {
-	return &NoBackup{}, nil
+	if c.GlobalString("backup") == "" {
+		log.Print("Choosing no backup.")
+		return &NoBackup{}, nil
+	}
+	log.Print("Choosing concurrent backup.")
+	return NewConcurrentBackup(c.Args().First(), c.GlobalString("backup")), nil
 }
 
 func GetSpongeFile(c *cli.Context) (SpongeFile, error) {
@@ -191,7 +196,70 @@ func (c *NoBackup) Complete() error {
 }
 
 
-// Does no backup
+type ConcurrentBackup struct {
+	SourceFn string
+	BackupFn string
+	Done chan error
+}
+
+func NewConcurrentBackup(source, backup string) Backup {
+	return &ConcurrentBackup{
+		SourceFn: source,
+		BackupFn: BackupFile(backup, source),
+		Done: make(chan error),
+	}
+}
+
+func (cb *ConcurrentBackup) Begin() error {
+	log.Printf("Backing up %s to %s", cb.SourceFn, cb.BackupFn)
+	source, err := os.Open(cb.SourceFn)
+	if err != nil {
+		close(cb.Done)
+		return err
+	}
+
+	backup, err := os.OpenFile(cb.BackupFn, os.O_RDWR|os.O_CREATE, 0600)
+	if err != nil {
+		source.Close()
+		close(cb.Done)
+		return err
+	}
+	go DoBackup(source, backup, cb.Done)
+	return nil
+}
+
+func DoBackup(source, dest *os.File, done chan error) {
+	log.Printf("Starting background copy.")
+	defer source.Close()
+	defer dest.Close()
+	n, err := io.Copy(dest, source)
+	log.Printf("Backed up %d bytes", n)
+	if err != nil {
+		done <- err
+	}
+	close(done)
+}
+
+func (cb *ConcurrentBackup) Abort() error {
+	log.Print("Waiting for backup to complete.")
+	return <- cb.Done
+}
+
+func (cb *ConcurrentBackup) Complete() error {
+	log.Print("Waiting for backup to complete.")
+	err := <- cb.Done
+	if err != nil {
+		return err
+	}
+	fi, err := os.Stat(cb.SourceFn)
+	if err != nil {
+		log.Printf("Stat failed. Not replicating permissions.")
+		return err
+	}
+	log.Printf("Updating permissions on %s to %o", cb.BackupFn, fi.Mode())
+	return os.Chmod(cb.BackupFn, fi.Mode())
+}
+
 type MemorySponge struct {
 	TargetFn string
 	Data     []byte
@@ -260,7 +328,7 @@ func TempDir(tempDir, targetFn string) string {
 	return strings.Replace(tempDir, "{base}", path.Base(targetFn), -1)
 }
 
-func BackupFileDir(backupFile, targetFn string) string {
+func BackupFile(backupFile, targetFn string) string {
 	backupFile = strings.Replace(backupFile, "{dir}", path.Dir(targetFn), -1)
 	backupFile = strings.Replace(backupFile, "{base}", path.Base(targetFn), -1)
 	return strings.Replace(backupFile, "{file}", targetFn, -1)
