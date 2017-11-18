@@ -3,14 +3,14 @@ package main
 import (
 	"fmt"
 	"os"
-
-	"github.com/urfave/cli"
 	"io"
 	"io/ioutil"
 	"log"
 	"errors"
 	"path"
 	"strings"
+
+	"github.com/urfave/cli"
 )
 
 var version string;
