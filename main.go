@@ -35,10 +35,6 @@ func main() {
 			Usage: "Write atomicly. Only needed with --memory.",
 		},
 		cli.BoolFlag{
-			Name:  "skinny-fast",
-			Usage: "Move the backup instead of copying. Momentarily unsafe.",
-		},
-		cli.BoolFlag{
 			Name:  "memory, m",
 			Usage: "Accumuate data in memory.",
 		},
@@ -151,10 +147,6 @@ func GetBackup(c *cli.Context) (Backup, error) {
 		log.Print("Choosing no backup.")
 		return &NoBackup{}, nil
 	}
-	if c.GlobalBool("skinny-fast") {
-		log.Print("Choosing post-sponge backup.")
-		return NewSkinnyFastBackup(c.Args().First(), c.GlobalString("backup")), nil
-	}
 	log.Print("Choosing concurrent backup.")
 	return NewConcurrentBackup(c.Args().First(), c.GlobalString("backup")), nil
 }
@@ -172,33 +164,6 @@ func (c *NoBackup) Abort() error {
 func (c *NoBackup) Complete() error {
 	return nil
 }
-
-
-type SkinnyFastBackup struct {
-	SourceFn string
-	BackupFn string
-}
-
-func NewSkinnyFastBackup(source, backup string) Backup {
-	return &SkinnyFastBackup{
-		SourceFn: source,
-		BackupFn: BackupFile(backup, source),
-	}
-}
-
-func (c *SkinnyFastBackup) Begin() error {
-	return nil
-}
-
-func (c *SkinnyFastBackup) Abort() error {
-	return nil
-}
-
-func (c *SkinnyFastBackup) Complete() error {
-	log.Printf("Renaming %s to %s", c.SourceFn, c.BackupFn)
-	return os.Rename(c.SourceFn, c.BackupFn)
-}
-
 
 type ConcurrentBackup struct {
 	SourceFn string
@@ -221,73 +186,6 @@ func (cb *ConcurrentBackup) Begin() error {
 	}
 	cb.Done = done
 	return nil
-}
-
-func Copy(src, dest string) (chan error, error) {
-	log.Printf("Copying up %s to %s", src, dest)
-	if src == dest {
-		return nil, errors.New("Will not copy to same filename.")
-	}
-	log.Printf("Statting source file %s", src)
-	sfi, err := os.Stat(src)
-	if err != nil {
-		if os.IsNotExist(err) {
-			log.Printf("Source file %s does not exist. No copy necessary.", src)
-			return nil, nil
-		} else {
-			return nil, err
-		}
-	}
-	if !sfi.Mode().IsRegular() {
-		return nil, fmt.Errorf("Cannot copy non-regular source file %s (%q)", src, sfi.Mode().String())
-	}
-	log.Printf("Statting destination file %s", dest)
-	dfi, err := os.Stat(dest)
-	if err != nil && !os.IsNotExist(err) {
-		return nil, err
-	}
-	if err == nil && !dfi.Mode().IsRegular() {
-		return nil, fmt.Errorf("Cannot copy to non-regular destination %s (%q)", dest, dfi.Mode().String())
-	}
-	log.Printf("Checking to see if source and destination are the same file.")
-	if os.SameFile(sfi, dfi) {
-		log.Printf("Already linked to destination. No copy necessary.")
-		return nil, nil
-	}
-	log.Print("Attemping to link files.")
-	if err = os.Link(src, dest); err == nil {
-		log.Print("Linked files, no copy necessary.")
-		return nil, nil
-	}
-	log.Printf("Opening %s for reading", src)
-	source, err := os.Open(src)
-	if err != nil {
-		log.Printf("Cannot open %s for reading", dest)
-		return nil, err
-	}
-
-	log.Printf("Opening %s for writing", dest)
-	backup, err := os.Create(dest)
-	if err != nil {
-		log.Printf("Cannot open %s for writing", dest)
-		source.Close()
-		return nil, err
-	}
-	done := make(chan error)
-	go DoBackup(source, backup, done)
-	return done, nil
-}
-
-func DoBackup(source, dest *os.File, done chan error) {
-	log.Printf("Starting background copy.")
-	defer source.Close()
-	defer dest.Close()
-	n, err := io.Copy(dest, source)
-	log.Printf("Backed up %d bytes", n)
-	if err != nil {
-		done <- err
-	}
-	close(done)
 }
 
 func (cb *ConcurrentBackup) Abort() error {
@@ -535,4 +433,71 @@ func (ams *AtomicMemorySponge) Complete() error {
 
 func (ams *AtomicMemorySponge) Cleanup() error {
 	return ams.Writer.Cleanup()
+}
+
+func Copy(src, dest string) (chan error, error) {
+	log.Printf("Copying up %s to %s", src, dest)
+	if src == dest {
+		return nil, errors.New("Will not copy to same filename.")
+	}
+	log.Printf("Statting source file %s", src)
+	sfi, err := os.Stat(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			log.Printf("Source file %s does not exist. No copy necessary.", src)
+			return nil, nil
+		} else {
+			return nil, err
+		}
+	}
+	if !sfi.Mode().IsRegular() {
+		return nil, fmt.Errorf("Cannot copy non-regular source file %s (%q)", src, sfi.Mode().String())
+	}
+	log.Printf("Statting destination file %s", dest)
+	dfi, err := os.Stat(dest)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	if err == nil && !dfi.Mode().IsRegular() {
+		return nil, fmt.Errorf("Cannot copy to non-regular destination %s (%q)", dest, dfi.Mode().String())
+	}
+	log.Printf("Checking to see if source and destination are the same file.")
+	if os.SameFile(sfi, dfi) {
+		log.Printf("Already linked to destination. No copy necessary.")
+		return nil, nil
+	}
+	log.Print("Attemping to link files.")
+	if err = os.Link(src, dest); err == nil {
+		log.Print("Linked files, no copy necessary.")
+		return nil, nil
+	}
+	log.Printf("Opening %s for reading", src)
+	source, err := os.Open(src)
+	if err != nil {
+		log.Printf("Cannot open %s for reading", dest)
+		return nil, err
+	}
+
+	log.Printf("Opening %s for writing", dest)
+	backup, err := os.Create(dest)
+	if err != nil {
+		log.Printf("Cannot open %s for writing", dest)
+		source.Close()
+		return nil, err
+	}
+	done := make(chan error)
+	go DoConcurrentCopy(source, backup, done)
+	return done, nil
+}
+
+func DoConcurrentCopy(source, dest *os.File, done chan error) {
+	log.Printf("Starting background copy.")
+	defer source.Close()
+	defer dest.Close()
+	n, err := io.Copy(dest, source)
+	log.Printf("Backed up %d bytes", n)
+	if err != nil {
+		done <- err
+	}
+	close(done)
 }
