@@ -63,7 +63,7 @@ then move it into place.
 Preserving Old Files
 --------------------
 
-`Spunge` can preserve the original file using the `--suffix` option.
+`Spunge` can preserve the original file using the `--backup` option.
 
 ```
 > echo "foo" > /tmp/data.txt
@@ -71,7 +71,7 @@ Preserving Old Files
 ...
 data.txt
 ...
-> cat /tmp/data.txt | sed 's/foo/bar/' | spunge --suffix .old /tmp/data.txt
+> cat /tmp/data.txt | sed 's/foo/bar/' | spunge --backup '{file}.old' /tmp/data.txt
 > ls /tmp
 ...
 data.txt
@@ -83,9 +83,9 @@ bar
 foo
 ```
 
-Normally `--prefix` copies the file to the new location, which means that
-the process momentarily consumes double the disk space.  When used in
-conjunction with the `--skinny-fast` option `spunge` instead moves the file
-to the backup location.  This means that the file momentarily does not
-exist.  If you're OK with this, then use `--skinny-fast`.
+There are three expansions in the backup filename:
+  * `{file}` expands to the full target filename.
+  * `{base}` expands to the target's name in the directory.  E.g. `/tmp/foo`
+     has base of `foo`.
+  * `{dir}` expands to the target's directory. E.g. `/tmp/foo` has dir of `/tmp`
 
