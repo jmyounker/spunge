@@ -24,14 +24,14 @@ func main() {
 	app.Flags = []cli.Flag{
 		cli.StringFlag{
 			Name:  "input, i",
-			Usage: "Read input from here.",
+			Usage: "Read input from here.  Exists for testing.",
 		},
 		cli.StringFlag{
 			Name:  "backup, b",
-			Usage: "Backs up to the specified file.",
+			Usage: "Backs up target to the specified file.",
 		},
 		cli.BoolFlag{
-			Name:  "atomic",
+			Name:  "atomic, a",
 			Usage: "Write atomicly. Only needed with --memory.",
 		},
 		cli.BoolFlag{
