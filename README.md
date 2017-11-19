@@ -89,3 +89,13 @@ There are three expansions in the backup filename:
      has base of `foo`.
   * `{dir}` expands to the target's directory. E.g. `/tmp/foo` has dir of `/tmp`
 
+
+Temp Directory
+--------------
+
+Normally the atomic sponge writes to a hidden file in the same directory containing
+the target file, but you can specify another location using the `--tempdir` option.
+The scratch file is written here and then afterwards copied to the destination
+location.
+
+The `--tmpdir` recognizes the `{dir}` option from the previous section.
