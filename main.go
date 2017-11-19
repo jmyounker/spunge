@@ -210,26 +210,72 @@ func NewConcurrentBackup(source, backup string) Backup {
 	return &ConcurrentBackup{
 		SourceFn: source,
 		BackupFn: BackupFile(backup, source),
-		Done: make(chan error),
+		Done: nil,
 	}
 }
 
 func (cb *ConcurrentBackup) Begin() error {
-	log.Printf("Backing up %s to %s", cb.SourceFn, cb.BackupFn)
-	source, err := os.Open(cb.SourceFn)
+	done, err := Copy(cb.SourceFn, cb.BackupFn)
 	if err != nil {
-		close(cb.Done)
 		return err
+	}
+	cb.Done = done
+	return nil
+}
+
+func Copy(src, dest string) (chan error, error) {
+	log.Printf("Copying up %s to %s", src, dest)
+	if src == dest {
+		return nil, errors.New("Will not copy to same filename.")
+	}
+	log.Printf("Statting source file %s", src)
+	sfi, err := os.Stat(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			log.Printf("Source file %s does not exist. No copy necessary.", src)
+			return nil, nil
+		} else {
+			return nil, err
+		}
+	}
+	if !sfi.Mode().IsRegular() {
+		return nil, fmt.Errorf("Cannot copy non-regular source file %s (%q)", src, sfi.Mode().String())
+	}
+	log.Printf("Statting destination file %s", dest)
+	dfi, err := os.Stat(dest)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	if err == nil && !dfi.Mode().IsRegular() {
+		return nil, fmt.Errorf("Cannot copy to non-regular destination %s (%q)", dest, dfi.Mode().String())
+	}
+	log.Printf("Checking to see if source and destination are the same file.")
+	if os.SameFile(sfi, dfi) {
+		log.Printf("Already linked to destination. No copy necessary.")
+		return nil, nil
+	}
+	log.Print("Attemping to link files.")
+	if err = os.Link(src, dest); err == nil {
+		log.Print("Linked files, no copy necessary.")
+		return nil, nil
+	}
+	log.Printf("Opening %s for reading", src)
+	source, err := os.Open(src)
+	if err != nil {
+		log.Printf("Cannot open %s for reading", dest)
+		return nil, err
 	}
 
-	backup, err := os.OpenFile(cb.BackupFn, os.O_RDWR|os.O_CREATE, 0600)
+	log.Printf("Opening %s for writing", dest)
+	backup, err := os.Create(dest)
 	if err != nil {
+		log.Printf("Cannot open %s for writing", dest)
 		source.Close()
-		close(cb.Done)
-		return err
+		return nil, err
 	}
-	go DoBackup(source, backup, cb.Done)
-	return nil
+	done := make(chan error)
+	go DoBackup(source, backup, done)
+	return done, nil
 }
 
 func DoBackup(source, dest *os.File, done chan error) {
@@ -245,11 +291,18 @@ func DoBackup(source, dest *os.File, done chan error) {
 }
 
 func (cb *ConcurrentBackup) Abort() error {
+	if cb.Done == nil {
+		log.Printf("Backup not started.")
+		return nil
+	}
 	log.Print("Waiting for backup to complete.")
 	return <- cb.Done
 }
 
 func (cb *ConcurrentBackup) Complete() error {
+	if cb.Done == nil {
+		return nil
+	}
 	log.Print("Waiting for backup to complete.")
 	err := <- cb.Done
 	if err != nil {
