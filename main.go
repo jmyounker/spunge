@@ -53,6 +53,12 @@ func main() {
 }
 
 func SpongeAction(c *cli.Context) error {
+	if len(c.Args()) == 0 {
+		return errors.New("Destination file required.")
+	}
+	if len(c.Args()) > 1 {
+		return errors.New("Can only sponge to one destination.")
+	}
 	if c.GlobalBool("atomic") && !c.GlobalBool("memory") {
 		return errors.New("--atomic makes no sense wihout --memory")
 	}
