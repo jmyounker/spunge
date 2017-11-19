@@ -15,6 +15,8 @@ import (
 
 var version string;
 
+var READSIZE = 4096
+
 func main() {
 	app := cli.NewApp()
 	app.Version = version
@@ -52,60 +54,6 @@ func main() {
 		fmt.Println(err)
 		os.Exit(1)
 	}
-}
-
-type Backup interface {
-	Begin() error
-	Abort() error
-	Complete() error
-}
-
-type SpongeFile interface {
-	Begin() error
-	Abort() error
-	Write([]byte) error
-	Complete() error
-	Cleanup() error
-}
-
-func GetBackup(c *cli.Context) (Backup, error) {
-	if c.GlobalString("backup") == "" {
-		log.Print("Choosing no backup.")
-		return &NoBackup{}, nil
-	}
-	if c.GlobalBool("skinny-fast") {
-		log.Print("Choosing post-sponge backup.")
-		return NewSkinnyFastBackup(c.Args().First(), c.GlobalString("backup")), nil
-	}
-	log.Print("Choosing concurrent backup.")
-	return NewConcurrentBackup(c.Args().First(), c.GlobalString("backup")), nil
-}
-
-func GetSpongeFile(c *cli.Context) (SpongeFile, error) {
-	if !c.GlobalBool("memory") {
-		return NewAtomicSponge(
-			c.Args().First(),
-			c.GlobalString("tmpdir"),
-			c.GlobalBool("leave-dirty")),
-			nil
-	}
-	if c.GlobalBool("atomic") {
-		return NewAtomicMemorySponge(
-			c.Args().First(),
-			c.GlobalString("tmpdir"),
-			c.GlobalBool("leave-dirty")),
-			nil
-	}
-	return NewMemorySponge(c.Args().First()), nil
-}
-
-
-func OpenInput(c *cli.Context) (*os.File, error) {
-	inputFn := c.GlobalString("input")
-	if inputFn == "" {
-		return os.Stdin, nil
-	}
-	return os.Open(inputFn)
 }
 
 func SpongeAction(c *cli.Context) error {
@@ -163,8 +111,6 @@ func SpongeAction(c *cli.Context) error {
 	return nil
 }
 
-var READSIZE = 4096
-
 func Transfer(in *os.File, sf SpongeFile) error {
 	var err error = nil
 	buf := make([]byte, READSIZE)
@@ -184,7 +130,35 @@ func Transfer(in *os.File, sf SpongeFile) error {
 	return err
 }
 
-// Does no backup
+func OpenInput(c *cli.Context) (*os.File, error) {
+	inputFn := c.GlobalString("input")
+	if inputFn == "" {
+		return os.Stdin, nil
+	}
+	return os.Open(inputFn)
+}
+
+// Backups perform backups of the original file.
+
+type Backup interface {
+	Begin() error
+	Abort() error
+	Complete() error
+}
+
+func GetBackup(c *cli.Context) (Backup, error) {
+	if c.GlobalString("backup") == "" {
+		log.Print("Choosing no backup.")
+		return &NoBackup{}, nil
+	}
+	if c.GlobalBool("skinny-fast") {
+		log.Print("Choosing post-sponge backup.")
+		return NewSkinnyFastBackup(c.Args().First(), c.GlobalString("backup")), nil
+	}
+	log.Print("Choosing concurrent backup.")
+	return NewConcurrentBackup(c.Args().First(), c.GlobalString("backup")), nil
+}
+
 type NoBackup struct {}
 
 func (c *NoBackup) Begin() error {
@@ -290,6 +264,35 @@ func (cb *ConcurrentBackup) Complete() error {
 	return os.Chmod(cb.BackupFn, fi.Mode())
 }
 
+// Sponges accumulate data before moving them into the correct location on
+// the filesystem
+
+type SpongeFile interface {
+	Begin() error
+	Abort() error
+	Write([]byte) error
+	Complete() error
+	Cleanup() error
+}
+
+func GetSpongeFile(c *cli.Context) (SpongeFile, error) {
+	if !c.GlobalBool("memory") {
+		return NewAtomicSponge(
+			c.Args().First(),
+			c.GlobalString("tmpdir"),
+			c.GlobalBool("leave-dirty")),
+			nil
+	}
+	if c.GlobalBool("atomic") {
+		return NewAtomicMemorySponge(
+			c.Args().First(),
+			c.GlobalString("tmpdir"),
+			c.GlobalBool("leave-dirty")),
+			nil
+	}
+	return NewMemorySponge(c.Args().First()), nil
+}
+
 type MemorySponge struct {
 	TargetFn string
 	Data     []byte
@@ -338,8 +341,6 @@ func (ms *MemorySponge) Cleanup() error {
 	return nil
 }
 
-
-// Atomic Sponge
 type AtomicSponge struct {
 	SpongeFn   string
 	TempDir    string
