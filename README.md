@@ -1,4 +1,4 @@
-Spunge: Binary Spuoge
+Spunge: Binary Spunge
 =====================
 
 This program is modeled upon sponge, and is used for writing data from
