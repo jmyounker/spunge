@@ -1,17 +1,19 @@
 all: clean update build test
 
+PKG_VERS := github.com/jmyounker/vers
+
 clean:
 	rm -f spunge
 
 update:
 	go get
-	go get github.com/jmyounker/vers
+	go get $(PKG_VERS)
 
 build-vers:
-	make -C $$GOPATH/src/github.com/jyounker/vers build
+	make -C $$GOPATH/src/$(PKG_VERS) build
 
 set-version: build-vers
-	$(eval VERSION := $(shell $$GOPATH/bin/vers -f version.json show))
+	$(eval VERSION := $(shell $$GOPATH/src/$(PKG_VERS)/vers -f version.json show))
 	
 build: set-version
 	go build -ldflags "-X main.version=$(VERSION)"
