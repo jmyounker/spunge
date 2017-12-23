@@ -10,14 +10,11 @@ import (
 	"strings"
 
 	"github.com/urfave/cli"
-	"github.com/tj/go-debug"
 )
 
 var version string;
 
 var READSIZE = 4096
-
-var dbg = debug.Debug("spunge")
 
 func main() {
 	app := cli.NewApp()
@@ -65,52 +62,40 @@ func SpongeAction(c *cli.Context) error {
 	if c.GlobalBool("atomic") && !c.GlobalBool("memory") {
 		return errors.New("--atomic makes no sense wihout --memory")
 	}
-	dbg("Get backup.")
 	bf, err := GetBackup(c)
 	if err != nil {
 		return err
 	}
-	dbg("Get sponge.")
 	sf, err := GetSpongeFile(c)
 	if err != nil {
 		return err
 	}
-	dbg("Get input source.")
 	in, err := OpenInput(c)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
-	dbg("Begin backup.")
 	if err := bf.Begin(); err != nil {
 		return err;
 	}
-	dbg("Beginning sponge.")
 	if err := sf.Begin(); err != nil {
 		bf.Abort();
 		return err
 	}
 	defer func() {
-		dbg("Cleaning sponge.")
 		sf.Cleanup()
 	}()
-	dbg("Sponging data.")
 	err = Transfer(os.Stdin, sf)
 	if err != nil {
-		dbg("Sponging data failed. Aborting backup and sponge.")
 		bf.Abort()
 		sf.Abort()
 		return err
 	}
-	dbg("Completing backup.")
 	if err := bf.Complete(); err != nil {
-		dbg("Backup completion failed. Aborting sponge.")
 		sf.Abort()
 		return err
 	}
-	dbg("Completing sponge.")
 	if err := sf.Complete(); err != nil {
-		dbg("Sponge completion failed.")
 		return err
 	}
 	return nil
@@ -121,7 +106,6 @@ func Transfer(in *os.File, sf SpongeFile) error {
 	buf := make([]byte, READSIZE)
 	for err == nil {
 		n, err := in.Read(buf)
-		dbg("Read and write %d bytes.", n)
 		if n > 0 {
 			sf.Write(buf[:n])
 		}
@@ -153,10 +137,8 @@ type Backup interface {
 
 func GetBackup(c *cli.Context) (Backup, error) {
 	if c.GlobalString("backup") == "" {
-		dbg("Choosing no backup.")
 		return &NoBackup{}, nil
 	}
-	dbg("Choosing concurrent backup.")
 	return NewConcurrentBackup(c.Args().First(), c.GlobalString("backup")), nil
 }
 
@@ -199,10 +181,8 @@ func (cb *ConcurrentBackup) Begin() error {
 
 func (cb *ConcurrentBackup) Abort() error {
 	if cb.Done == nil {
-		dbg("Backup not started.")
 		return nil
 	}
-	dbg("Waiting for backup to complete.")
 	return <- cb.Done
 }
 
@@ -210,17 +190,14 @@ func (cb *ConcurrentBackup) Complete() error {
 	if cb.Done == nil {
 		return nil
 	}
-	dbg("Waiting for backup to complete.")
 	err := <- cb.Done
 	if err != nil {
 		return err
 	}
 	fi, err := os.Stat(cb.SourceFn)
 	if err != nil {
-		dbg("Stat failed. Not replicating permissions.")
 		return err
 	}
-	dbg("Updating permissions on %s to %o", cb.BackupFn, fi.Mode())
 	return os.Chmod(cb.BackupFn, fi.Mode())
 }
 
@@ -274,9 +251,7 @@ func (ms *MemorySponge) Abort() error {
 }
 
 func (ms *MemorySponge) Write(d []byte) error {
-	dbg("Appending %d bytes to %d bytes in memory", len(d), len(ms.Data))
 	ms.Data = append(ms.Data, d...)
-	dbg("Total data length %d bytes in memory", len(ms.Data))
 	return nil
 }
 
@@ -289,7 +264,6 @@ func (ms *MemorySponge) Complete() error {
 	if err != nil {
 		mode = fi.Mode()
 	}
-	dbg("Saving %d bytes to file %s with mode %o.", len(ms.Data), ms.TargetFn, mode)
 	err = ioutil.WriteFile(ms.TargetFn, ms.Data, mode)
 	if err != nil {
 		return err
@@ -336,12 +310,10 @@ func NewAtomicSponge(targetFn, tempDir string, leaveDirty bool) SpongeFile {
 func (ms *AtomicSponge) Begin() error {
 	sponge, err := ioutil.TempFile(ms.TempDir, ".sponge")
 	if err != nil {
-		dbg("Cannot create sponge file in %s", ms.TempDir)
 		return err
 	}
 	ms.Sponge = sponge
 	ms.SpongeFn = sponge.Name()
-	dbg("Create sponge file %s", sponge.Name())
 	return nil
 }
 
@@ -351,7 +323,6 @@ func (ms *AtomicSponge) Abort() error {
 
 func (ms *AtomicSponge) Write(d []byte) error {
 	n, err := ms.Sponge.Write(d)
-	dbg("Wrote %d bytes to sponge file.", n)
 	if err != nil {
 		return err
 	}
@@ -362,7 +333,6 @@ func (ms *AtomicSponge) Write(d []byte) error {
 }
 
 func (ms *AtomicSponge) Complete() error {
-	dbg("Closing sponge.")
 	err := ms.Sponge.Close()
 	ms.Sponge = nil
 	if err != nil {
@@ -373,13 +343,10 @@ func (ms *AtomicSponge) Complete() error {
 		return err
 	}
 	if err == nil {
-		dbg("Setting sponge permissions to match existing file: %o.", fi.Mode())
 		if err := os.Chmod(ms.SpongeFn, fi.Mode()); err != nil {
-			dbg("Cannot set %s to mode %o", ms.SpongeFn, fi.Mode())
 		}
 
 	}
-	dbg("Renaming sponge file %s to %s", ms.SpongeFn, ms.TargetFn)
 	if err := os.Rename(ms.SpongeFn, ms.TargetFn); err != nil {
 		return err
 	}
@@ -388,14 +355,11 @@ func (ms *AtomicSponge) Complete() error {
 
 func (ms *AtomicSponge) Cleanup() error {
 	if ms.LeaveDirty {
-		dbg("Leaving dirty environment.")
 		return nil
 	}
 	if _, err := os.Stat(ms.SpongeFn); os.IsNotExist(err) {
-		dbg("Nothing to clean.")
 		return nil
 	}
-	dbg("Removing stray sponge file %s.", ms.SpongeFn)
 	if err := os.Remove(ms.SpongeFn); err != nil {
 		return err
 	}
@@ -420,9 +384,7 @@ func (ams *AtomicMemorySponge) Begin() error {
 }
 
 func (ams *AtomicMemorySponge) Write(d []byte) error {
-	dbg("Appending %d bytes to %d bytes in memory", len(d), len(ams.Data))
 	ams.Data = append(ams.Data, d...)
-	dbg("Total data length %d bytes in memory", len(ams.Data))
 	return nil
 }
 
@@ -445,15 +407,12 @@ func (ams *AtomicMemorySponge) Cleanup() error {
 }
 
 func Copy(src, dest string) (chan error, error) {
-	dbg("Copying up %s to %s", src, dest)
 	if src == dest {
 		return nil, errors.New("Will not copy to same filename.")
 	}
-	dbg("Statting source file %s", src)
 	sfi, err := os.Stat(src)
 	if err != nil {
 		if os.IsNotExist(err) {
-			dbg("Source file %s does not exist. No copy necessary.", src)
 			return nil, nil
 		} else {
 			return nil, err
@@ -462,7 +421,6 @@ func Copy(src, dest string) (chan error, error) {
 	if !sfi.Mode().IsRegular() {
 		return nil, fmt.Errorf("Cannot copy non-regular source file %s (%q)", src, sfi.Mode().String())
 	}
-	dbg("Statting destination file %s", dest)
 	dfi, err := os.Stat(dest)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err
@@ -470,27 +428,19 @@ func Copy(src, dest string) (chan error, error) {
 	if err == nil && !dfi.Mode().IsRegular() {
 		return nil, fmt.Errorf("Cannot copy to non-regular destination %s (%q)", dest, dfi.Mode().String())
 	}
-	dbg("Checking to see if source and destination are the same file.")
 	if os.SameFile(sfi, dfi) {
-		dbg("Already linked to destination. No copy necessary.")
 		return nil, nil
 	}
-	dbg("Attemping to link files.")
 	if err = os.Link(src, dest); err == nil {
-		dbg("Linked files, no copy necessary.")
 		return nil, nil
 	}
-	dbg("Opening %s for reading", src)
 	source, err := os.Open(src)
 	if err != nil {
-		dbg("Cannot open %s for reading", dest)
 		return nil, err
 	}
 
-	dbg("Opening %s for writing", dest)
 	backup, err := os.Create(dest)
 	if err != nil {
-		dbg("Cannot open %s for writing", dest)
 		source.Close()
 		return nil, err
 	}
@@ -500,11 +450,9 @@ func Copy(src, dest string) (chan error, error) {
 }
 
 func DoConcurrentCopy(source, dest *os.File, done chan error) {
-	dbg("Starting background copy.")
 	defer source.Close()
 	defer dest.Close()
-	n, err := io.Copy(dest, source)
-	dbg("Backed up %d bytes", n)
+	_, err := io.Copy(dest, source)
 	if err != nil {
 		done <- err
 	}
