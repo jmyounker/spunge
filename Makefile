@@ -3,7 +3,7 @@ all: clean update build test
 PKG_VERS := github.com/jmyounker/vers
 
 clean:
-	rm -f spunge
+	rm -rf spunge target
 
 update:
 	go get
