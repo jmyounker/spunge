@@ -21,6 +21,7 @@ var dbg = debug.Debug("spunge")
 
 func main() {
 	app := cli.NewApp()
+	app.Usage = "Accumulate data and write to storage when complete."
 	app.Version = version
 
 	app.Flags = []cli.Flag{
