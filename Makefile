@@ -5,7 +5,7 @@ clean:
 
 update:
 	go get
-	go get github.com/jyounker/vers
+	go get github.com/jmyounker/vers
 
 build-vers:
 	make -C $$GOPATH/src/github.com/jyounker/vers build
