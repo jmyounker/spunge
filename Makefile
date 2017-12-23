@@ -5,9 +5,16 @@ clean:
 
 update:
 	go get
+	go get github.com/jyounker/vers
 
-build: build
-	go build -ldflags "-X main.version=$(shell vers -f version.json show)"
+build-vers:
+	make -C $$GOPATH/src/github.com/jyounker/vers build
+
+set-version: build-vers
+	$(eval VERSION := $(shell $$GOPATH/bin/vers -f version.json show))
+	
+build: set-version
+	go build -ldflags "-X main.version=$(VERSION)"
 
 test: build
 	go test
