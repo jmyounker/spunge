@@ -1,4 +1,4 @@
-all: clean update build test show
+all: clean update build test
 
 clean:
 	rm -f spunge
