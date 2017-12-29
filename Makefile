@@ -1,9 +1,11 @@
 all: clean update build test
 
 PKG_VERS := github.com/jmyounker/vers
+PKG_NAME := spunge
+CMD := spunge
 
 clean:
-	rm -rf spunge target
+	rm -rf $(CMD) target
 
 update:
 	go get
@@ -31,20 +33,20 @@ package-osx: set-version package-base
 	mkdir target/model/osx/usr
 	mkdir target/model/osx/usr/local
 	mkdir target/model/osx/usr/local/bin
-	install -m 755 spunge target/model/osx/usr/local/bin/spunge
-	fpm -s dir -t osxpkg -n spunge -v $(VERSION) -p target/package -C target/model/osx .
+	install -m 755 $(CMD) target/model/osx/usr/local/bin/$(CMD)
+	fpm -s dir -t osxpkg -n $(PKG_NAME) -v $(VERSION) -p target/package -C target/model/osx .
 
 package-rpm: set-version package-base
 	mkdir target/model/linux-x86-rpm
 	mkdir target/model/linux-x86-rpm/usr
 	mkdir target/model/linux-x86-rpm/usr/bin
-	install -m 755 spunge target/model/linux-x86-rpm/usr/bin/spunge
-	fpm -s dir -t rpm -n spunge -v $(VERSION) -p target/package -C target/model/linux-x86-rpm .
+	install -m 755 $(CMD) target/model/linux-x86-rpm/usr/bin/$(CMD)
+	fpm -s dir -t rpm -n $(PGK_NAME) -v $(VERSION) -p target/package -C target/model/linux-x86-rpm .
 
 package-deb: set-version package-base
 	mkdir target/model/linux-x86-deb
 	mkdir target/model/linux-x86-deb/usr
 	mkdir target/model/linux-x86-deb/usr/bin
-	install -m 755 spunge target/model/linux-x86-deb/usr/bin/spunge
-	fpm -s dir -t deb -n spunge -v $(VERSION) -p target/package -C target/model/linux-x86-deb .
+	install -m 755 $(CMD) target/model/linux-x86-deb/usr/bin/$(CMD)
+	fpm -s dir -t deb -n $(PKG_NAME) -v $(VERSION) -p target/package -C target/model/linux-x86-deb .
 
